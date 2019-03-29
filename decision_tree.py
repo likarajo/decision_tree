@@ -29,14 +29,15 @@ import numpy as np
 import os
 import graphviz
 
+from pprint import pprint
+
 import matplotlib.pyplot as plt
 
+from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import confusion_matrix
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import export_graphviz
 from sklearn.model_selection import train_test_split
-
-import sys
-sys.setrecursionlimit(12000)
 
 def partition(x):
     """
@@ -48,9 +49,23 @@ def partition(x):
       ...
       vk: indices of x == vk }, where [v1, ... vk] are all the unique values in the vector z.
     """
-
+    
     # INSERT YOUR CODE HERE
-    return {c: (x==c).nonzero()[0] for c in np.unique(x)}
+    
+    x_dict = {}
+    j = 0
+    for i in x:
+        if i not in x_dict:
+            x_dict[i] = []
+            x_dict[i].append(j)
+        else:
+            x_dict[i].append(j)
+        j = j + 1
+
+    return x_dict
+
+    #return {c: (x==c).nonzero()[0] for c in np.unique(x)}
+    
     raise Exception('Function not yet implemented!')
 
 #x1 = [1,2,3,2]
@@ -64,16 +79,16 @@ def entropy(y):
     """
 
     # INSERT YOUR CODE HERE
-    h = 0
     
-    # return_counts=True returns the number of times each unique item appears
-    val, counts = np.unique(y, return_counts=True)
-    probs = counts.astype('float')/len(y)
-    
-    for p in probs:
-        if p != 0.0:
-            h -= p * np.log2(p)
-            
+    z = partition(y)
+    h = 0.0
+
+    for k, v in z.items():
+        # p = length of the list of indices for each item in z divided by the total length of vector y
+        p = len(v) / len(y)
+        # update the entropy with plog(p).
+        h = h - ( p * np.log2(p))
+
     return h
 
     raise Exception('Function not yet implemented!')
@@ -89,15 +104,34 @@ def mutual_information(x, y):
     """
 
     # INSERT YOUR CODE HERE
-    mi = entropy(y)
 
-     # return_counts=True returns the number of times each unique item appears
-    val, counts = np.unique(x, return_counts=True)
-    probs = counts.astype('float')/len(x)
+    # list of unique values in x
+    x_unique = partition(x)
 
-    # We calculate a weighted average of the entropy
-    for p, v in zip(probs, val):
-        mi -= p * entropy(y[x == v])
+    # counts of the unique values in x
+    x_counts = []
+    for k in x_unique.keys():
+        x_counts.append(len(x_unique[k]))
+
+    # probabilty of the unique values in x
+    probs_x = []
+    for i in x_counts:
+        probs_x.append(i / len(x))
+        
+    # Entropy
+    hy = entropy(y)
+
+    # Conditional entropy H(y | x)
+    hyx = 0.0
+
+    # Weighted average entropy over all possible splits
+    j = 0
+    for i, v in x_unique.items():
+        hyx = hyx + probs_x[j] * entropy(y[v])
+        j += 1
+
+    # Mutual Information or Information Gain, MI = H(y) - H( y | x)
+    mi = hy - hyx
 
     return mi
 
@@ -146,29 +180,77 @@ def id3(x, y, attribute_value_pairs=None, depth=0, max_depth=5):
     """
 
     # INSERT YOUR CODE HERE. NOTE: THIS IS A RECURSIVE FUNCTION.
-    # If there is only one unique label then return the label
-    if len(set(y)) == 1:
-        return y
     
-    # If there is only one label then return the label
-    if len(y) == 0:
-        return y
-    
-    # Create empty tree
+    md = max_depth
+
     tree = {}
 
-    # Select the feature that gives highest mutual information (best feature)
-    m_infos = np.array([mutual_information(feature, y) for feature in x.T])
-    best_feature = np.argmax(m_infos)
+    # list of unique values in y
+    y_unique = partition(y)
 
-    # Split using the selected feature
-    splits = partition(x[:, best_feature])
+    # counts of unique values in y
+    y_counts = []
+    for k in y_unique.keys():
+        y_counts.append(len(y_unique[k]))
+
+    # When y is Pure, i.e. only one unique value in the set, return the label
+    if len(list(y_unique.keys())) == 1:
+        return y[0]
     
-    # Grow tree based on split of the best feature
-    for key, val in splits.items():
-        node = x.take(val, axis=0)
-        label = y.take(val, axis=0)
-        tree["%s = %d" % (best_feature, key)] = id3(node, label)
+    # Forming the attribute-value pairs list
+    if attribute_value_pairs is None:
+        attribute_value_pairs = []
+        # for each of the attributes
+        for attr in range(x.shape[1]):
+            # for each of the unique values
+            for val in partition(x[:, attr]).keys():
+                # form attribute value pair
+                attribute_value_pairs.append((attr, val))
+        # Convert list to array
+        attribute_value_pairs = np.array(attribute_value_pairs)
+
+    # When no attribute-value pairs left to split on, return the majority label
+    if len(attribute_value_pairs) == 0:
+        max_count = 0
+        majority_label = 0
+        for l, c in y_unique.items():
+            if len(c) >= max_count:
+                max_count = len(c)
+                majority_label = l
+        return majority_label
+
+    # When the Tree has grown to maximum depth, return the majority label
+    if md==0:
+        max_count = 0
+        majority_label = 0
+        for l, c in y_unique.items():
+            if len(c) >= max_count:
+                max_count = len(c)
+                majority_label = l
+        return majority_label
+
+    # Find the best attribute that has maximum Mutual Information
+    mi_max = 0.0
+    attr = 0
+    value = 0
+    for (a, v) in attribute_value_pairs:
+        mi = mutual_information(np.array(x[:, a] == v), y)
+        if mi >= mi_max:
+            mi_max = mi
+            attr = a
+            value = v
+
+    # Delete the best attribute from the attribute-value-pairs list
+    attribute_value_pairs = np.delete(attribute_value_pairs, attribute_value_pairs[np.where(attribute_value_pairs == (attr, value))], 0)
+
+    # Split on the best attribute
+    splits = partition(np.array(x[:, attr] == value).astype(int))
+
+    for split_value, indices in splits.items():
+        x_subset = x.take(indices, axis=0)
+        y_subset = y.take(indices, axis=0)
+        decision = bool(split_value)
+        tree[(attr, value, decision)] = id3(x_subset, y_subset, attribute_value_pairs=attribute_value_pairs, max_depth = md - 1)
 
     return tree
 
@@ -184,18 +266,20 @@ def predict_example(x, tree):
     """
 
     # INSERT YOUR CODE HERE. NOTE: THIS IS A RECURSIVE FUNCTION.
-    for key in tree.keys():
-        value = x[key]
-        tree = tree[key][value]
-        predicted_label = 0;
-        if type(tree) is dict:
-            predicted_label = predict_example(x, tree)
-        else:
-            predicted_label = tree
-            break;
+    for nodes, subtrees in tree.items():
+        _feature = nodes[0]
+        _value = nodes[1]
+        _decision = nodes[2]
+        
+        if _decision == (x[_feature] == _value):
+            if type(subtrees) is dict:
+                predicted_label = predict_example(x, subtrees)
+            else:
+                predicted_label = subtrees
             
-    return predicted_label
-    raise Exception('Function not yet implemented!')
+            return predicted_label
+
+    #raise Exception('Function not yet implemented!')
 
 
 def compute_error(y_true, y_pred):
@@ -209,8 +293,8 @@ def compute_error(y_true, y_pred):
     misclassifications = 0
     n = len(y_true)
     
-    for i in y_true:
-        if(y_true[i] != y_pred[i]):
+    for i in range(n):
+        if(y_pred[i] != y_true[i]):
             misclassifications += 1
     
     return misclassifications/n
@@ -303,33 +387,122 @@ def to_graphviz(tree, dot_string='', uid=-1, depth=0):
         return dot_string
     else:
         return dot_string, node_id, uid
+ 
+# Function to print and plot the confusion matrix (customized and edited the sklearn's plot_confusion_matrix function)
+def plot_confusion_matrix(y_true, y_pred,
+                          normalize=False,
+                          title=None,
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
 
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    # Only use the labels that appear in the data
+    classes = unique_labels(y_true, y_pred)
+
+    print(cm)
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # We want to show all ticks...
+    ax.set(xticks=np.arange(cm.shape[1]),
+           yticks=np.arange(cm.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations.
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], fmt),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    #fig.tight_layout()
+    fig.savefig('./'+title+'.jpg')
+    return ax
 
 if __name__ == '__main__':
     # Load the training and testing data
-    Mtrn1 = np.genfromtxt('./monks-1.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtrn1 = np.genfromtxt('./data/monks-1.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytrn1 = Mtrn1[:, 0]
     Xtrn1 = Mtrn1[:, 1:]
 
-    Mtst1 = np.genfromtxt('./monks-1.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtst1 = np.genfromtxt('./data/monks-1.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytst1 = Mtst1[:, 0]
     Xtst1 = Mtst1[:, 1:]
     
-    Mtrn2 = np.genfromtxt('./monks-2.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtrn2 = np.genfromtxt('./data/monks-2.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytrn2 = Mtrn2[:, 0]
     Xtrn2 = Mtrn2[:, 1:]
 
-    Mtst2 = np.genfromtxt('./monks-2.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtst2 = np.genfromtxt('./data/monks-2.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytst2 = Mtst2[:, 0]
     Xtst2 = Mtst2[:, 1:]
     
-    Mtrn3 = np.genfromtxt('./monks-3.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtrn3 = np.genfromtxt('./data/monks-3.train', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytrn3 = Mtrn3[:, 0]
     Xtrn3 = Mtrn3[:, 1:]
 
-    Mtst3 = np.genfromtxt('./monks-3.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
+    Mtst3 = np.genfromtxt('./data/monks-3.test', missing_values=0, skip_header=0, delimiter=',', dtype=int)
     ytst3 = Mtst3[:, 0]
     Xtst3 = Mtst3[:, 1:]
+    
+    # function to change the strings in dataset to integers
+    convertfunc = lambda symbol: 1 if symbol=='x' else 2 if symbol=='o' else 3 if symbol=='b' else 1 if symbol=='positive' else 0 if symbol=='negative' else 1      
+            
+    y_ttt = np.genfromtxt('./data/tic-tac-toe.txt', missing_values=0, skip_header=0, delimiter=',', dtype=None, encoding='ascii',
+                          converters={9: convertfunc}, usecols=9)
+    X_ttt = np.genfromtxt('./data/tic-tac-toe.txt', missing_values=0, skip_header=0, delimiter=',', dtype=None, encoding='ascii',
+                          converters={0:convertfunc,
+                                      1:convertfunc,
+                                      2:convertfunc,
+                                      3:convertfunc,
+                                      4:convertfunc,
+                                      5:convertfunc,
+                                      6:convertfunc,
+                                      7:convertfunc,
+                                      8:convertfunc}, usecols=range(9))
+
+    X_ttt_trn, X_ttt_tst, y_ttt_trn, y_ttt_tst = train_test_split(X_ttt, y_ttt, test_size=0.3, random_state=42)
+ 
+
+##=========Test in monks-1=================================
+#    # Learn a decision tree of depth 3
+#    decision_tree = id3(Xtrn1, ytrn1, max_depth=3)
+#
+#    # Pretty print it to console
+#    pprint(decision_tree)
+#    #pretty_print(decision_tree)
+#
+##    # Visualize the tree and save it as a PNG image
+##    dot_str = to_graphviz(decision_tree)
+##    render_dot_file(dot_str, './my_learned_tree')
+#
+#    # Compute the train and test error
+#    y_pred = [predict_example(x, decision_tree) for x in Xtrn1]
+#    trn_err = compute_error(ytrn1, y_pred)
+#    y_pred = [predict_example(x, decision_tree) for x in Xtst1]
+#    tst_err = compute_error(ytst1, y_pred)
+#
+#    print('Train Error = {0:4.2f}%.'.format(trn_err * 100))
+#    print('Test Error = {0:4.2f}%.'.format(tst_err * 100))
 
 #=========For depth = 1 to 10, learn decision trees 
 #         and compute the average training and test errors on each of 
@@ -344,108 +517,150 @@ if __name__ == '__main__':
     trn_err3 = {}
     tst_err3 = {}    
     
-    for d in range (1,4):
+    for d in range (1,11):
         # Learn a decision tree of depth d
         decision_tree1 = id3(Xtrn1, ytrn1, max_depth=d)
         decision_tree2 = id3(Xtrn2, ytrn2, max_depth=d)
         decision_tree3 = id3(Xtrn3, ytrn3, max_depth=d)
+        
+#        # Visualize the tree and save it as a PNG image
+#        dot_str = to_graphviz(decision_tree1)
+#        render_dot_file(dot_str, './my_learned_tree_monks1_depth'+str(d))
+#        dot_str = to_graphviz(decision_tree2)
+#        render_dot_file(dot_str, './my_learned_tree_monks2_depth'+str(d))
+#        dot_str = to_graphviz(decision_tree3)
+#        render_dot_file(dot_str, './my_learned_tree_monks3_depth'+str(d))
+        
+        # Predict using train set
+        y_pred1 = [predict_example(x, decision_tree1) for x in Xtrn1]
+        y_pred2 = [predict_example(x, decision_tree2) for x in Xtrn2]
+        y_pred3 = [predict_example(x, decision_tree3) for x in Xtrn3]
+        
+        # Compute and store the training errors
+        trn_err1[d] = compute_error(ytrn1, y_pred1)
+        trn_err2[d] = compute_error(ytrn2, y_pred2)
+        trn_err3[d] = compute_error(ytrn3, y_pred3)
         
         # Predict using test set
         y_pred1 = [predict_example(x, decision_tree1) for x in Xtst1]
         y_pred2 = [predict_example(x, decision_tree2) for x in Xtst2]
         y_pred3 = [predict_example(x, decision_tree3) for x in Xtst3]
         
-        # Compute and store the training errors
-        trn_err1[d] = compute_error(ytrn1, y_pred1)
-        trn_err2[d] = compute_error(ytrn2, y_pred2)
-        trn_err3[d] = compute_error(ytrn3, y_pred3)
-        #print('Test Error = {0:4.2f}%.'.format(tst_err1 * 100))
-        
         # Compute and store the test errors 
         tst_err1[d] = compute_error(ytst1, y_pred1)
         tst_err2[d] = compute_error(ytst2, y_pred2)
         tst_err3[d] = compute_error(ytst3, y_pred3)
-        #print('Test Error = {0:4.2f}%.'.format(tst_err1 * 100))
-        
+      
     # Plot the training and Testing errors with varying depth
-    plt.figure()
-    plt.plot(trn_err1.keys(), trn_err1.values(), marker='s', linewidth=3, markersize=12)
-    plt.plot(tst_err1.keys(), tst_err1.values(), marker='o', linewidth=3, markersize=12)
-    plt.xlabel('Tree depth', fontsize=16)
-    plt.ylabel('Trn/Test error', fontsize=16)
-    plt.xticks(list(trn_err1.keys()), fontsize=12)
-    plt.legend(['Training Error', 'Test Error'], fontsize=16)
+    fig1 = plt.figure()
+    fig1.suptitle('Error on monks-1')
+    plt.plot(trn_err1.keys(), trn_err1.values(), marker='s', linewidth=2, markersize=7)
+    plt.plot(tst_err1.keys(), tst_err1.values(), marker='o', linewidth=2, markersize=7)
+    plt.xlabel('Tree depth', fontsize=10)
+    plt.ylabel('Trn/Test error', fontsize=10)
+    plt.xticks(list(trn_err1.keys()), fontsize=10)
+    plt.legend(['Training Error', 'Test Error'], fontsize=10)
+    fig1.savefig('./monks1_error.jpg')
     
-    plt.figure()
-    plt.plot(trn_err2.keys(), trn_err2.values(), marker='s', linewidth=3, markersize=12)
-    plt.plot(tst_err2.keys(), tst_err2.values(), marker='o', linewidth=3, markersize=12)
-    plt.xlabel('Tree depth', fontsize=16)
-    plt.ylabel('Trn/Test error', fontsize=16)
-    plt.xticks(list(trn_err2.keys()), fontsize=12)
-    plt.legend(['Training Error', 'Test Error'], fontsize=16)
+    fig2 = plt.figure()
+    fig2.suptitle('Error on monks-2')
+    plt.plot(trn_err2.keys(), trn_err2.values(), marker='s', linewidth=2, markersize=7)
+    plt.plot(tst_err2.keys(), tst_err2.values(), marker='o', linewidth=2, markersize=7)
+    plt.xlabel('Tree depth', fontsize=10)
+    plt.ylabel('Trn/Test error', fontsize=10)
+    plt.xticks(list(trn_err2.keys()), fontsize=10)
+    plt.legend(['Training Error', 'Test Error'], fontsize=10)
+    fig2.savefig('./monks2_error.jpg')
 
-    plt.figure()
-    plt.plot(trn_err3.keys(), trn_err3.values(), marker='s', linewidth=3, markersize=12)
-    plt.plot(tst_err3.keys(), tst_err3.values(), marker='o', linewidth=3, markersize=12)
-    plt.xlabel('Tree depth', fontsize=16)
-    plt.ylabel('Trn/Test error', fontsize=16)
-    plt.xticks(list(trn_err3.keys()), fontsize=12)
-    plt.legend(['Training Error', 'Test Error'], fontsize=16) 
+    fig3 = plt.figure()
+    fig3.suptitle('Error on monks-3')
+    plt.plot(trn_err3.keys(), trn_err3.values(), marker='s', linewidth=2, markersize=7)
+    plt.plot(tst_err3.keys(), tst_err3.values(), marker='o', linewidth=2, markersize=7)
+    plt.xlabel('Tree depth', fontsize=10)
+    plt.ylabel('Trn/Test error', fontsize=10)
+    plt.xticks(list(trn_err3.keys()), fontsize=10)
+    plt.legend(['Training Error', 'Test Error'], fontsize=10)
+    fig3.savefig('./monks3_error.jpg')
+    
     
 #===========For monks-1, learned decision tree using self implemented classifier and scikit's version
 #           and found the confusion matrix on the test set for depth = 1, 3, 5========================
     
-    print("Self implementation on monks-1")
+    print("Self-implementation on monks-1")
     for d in range(1, 6, 2):
         # Learn classifier of depth d
         self_clf = id3(Xtrn1, ytrn1, max_depth=d)
-        # Pretty print decision tree to console 
         print("For depth = ",d)
-        pretty_print(self_clf)
+#        # Pretty print decision tree to console 
+#        pprint(self_clf)
+#        #pretty_print(self_clf)
         # Visualize the tree and save it as a PNG image
         dot_str = to_graphviz(self_clf)
-        render_dot_file(dot_str, './my_learned_tree_monks-1_{0}'.format(d))
+        render_dot_file(dot_str, './my_learned_tree_monks1_depth{0}'.format(d))
+        os.remove('./my_learned_tree_monks1_depth{0}'.format(d))
         # Predict using test set
         self_y_pred = [predict_example(x, self_clf) for x in Xtst1]
-        # Compute the confusion matrix
-        print(confusion_matrix(ytst1, self_y_pred))
+        # Compute and plot the confusion matrix
+        tn, fp, fn, tp = confusion_matrix(ytst1, self_y_pred).ravel()
+        print("(tn, fp, fn, tp) = ", (tn, fp, fn, tp))
+        plot_confusion_matrix(ytst1, self_y_pred, normalize=False,
+                      title='my_learned_tree_monks1_depth{0}_cm'.format(d))
         
     print("Scikit-learn's implementation on monks-1")
     for d in range(1, 6, 2):
         # Learn classifier of depth d
         sklearn_clf = DecisionTreeClassifier(criterion='entropy', max_depth=d)
         sklearn_clf.fit(Xtrn1, ytrn1)
+        print("For depth = ",d)
+        # Visualize the tree and save it as a PNG image
+        dot_data = export_graphviz(sklearn_clf)  
+        render_dot_file(dot_data, './sklearn_tree_monks1_depth{0}'.format(d))
+        os.remove("./sklearn_tree_monks1_depth{0}".format(d))
         # Predict using test set
-        sklearn_y_pred = [predict_example(x, sklearn_clf) for x in Xtst1]
-        # Compute the confusion matrix
-        print(confusion_matrix(ytst1, sklearn_y_pred)) 
+        sklearn_y_pred = sklearn_clf.predict(Xtst1, check_input=True)
+        # Compute and plot the confusion matrix (reference from sklearn.plot_confusion_matrix)
+        tn, fp, fn, tp = confusion_matrix(ytst1, sklearn_y_pred).ravel()
+        print("(tn, fp, fn, tp) = ", (tn, fp, fn, tp))
+        plot_confusion_matrix(ytst1, sklearn_y_pred, normalize=False,
+                      title='sklearn_tree_monks1_depth{0}_cm'.format(d)) 
 
-    X_ttt = np.loadtxt('tic-tac-toe.txt', delimiter=',', usecols=(np.arange(0,8))) 
-    y_ttt = np.loadtxt('tic-tac-toe.txt', delimiter=',', usecols=(9))
-    X_ttt_trn, X_ttt_tst, y_ttt_trn, y_ttt_tst = train_test_split(X_ttt, y_ttt, test_size=0.3, random_state=42)
-    
+#===========For personal dataset, learned decision tree using self implemented classifier and scikit's version
+#           and found the confusion matrix on the test set for depth = 1, 3, 5========================
+   
     print("Self implementation on tic-tac-toe data")
     for d in range(1, 6, 2):
         # Learn classifier of depth d
         self_clf = id3(X_ttt_trn, y_ttt_trn, max_depth=d)
-        # Pretty print decision tree to console 
         print("For depth = ",d)
-        pretty_print(self_clf)
+#        # Pretty print decision tree to console 
+#        pprint(self_clf)
+#        #pretty_print(self_clf)
         # Visualize the tree and save it as a PNG image
         dot_str = to_graphviz(self_clf)
-        render_dot_file(dot_str, './my_learned_tree_monks-1_{0}'.format(d))
+        render_dot_file(dot_str, './my_learned_tree_ttt_depth{0}'.format(d))
+        os.remove('./my_learned_tree_ttt_depth{0}'.format(d))
         # Predict using test set
         self_y_pred = [predict_example(x, self_clf) for x in X_ttt_tst]
-        # Compute the confusion matrix
-        print(confusion_matrix(y_ttt_tst, self_y_pred))
+        # Compute and plot the confusion matrix
+        tn, fp, fn, tp = confusion_matrix(y_ttt_tst, self_y_pred).ravel()
+        print("(tn, fp, fn, tp) = ", (tn, fp, fn, tp))
+        plot_confusion_matrix(y_ttt_tst, self_y_pred, normalize=False,
+                      title='my_learned_tree_ttt_depth{0}_cm'.format(d))
         
     print("Scikit-learn's implementation on tic-tac-toe data")
     for d in range(1, 6, 2):
         # Learn classifier of depth d
         sklearn_clf = DecisionTreeClassifier(criterion='entropy', max_depth=d)
         sklearn_clf.fit(X_ttt_trn, y_ttt_trn)
+        print("For depth = ",d)
+        # Visualize the tree and save it as a PNG image
+        dot_data = export_graphviz(sklearn_clf)  
+        render_dot_file(dot_data, './sklearn_tree_ttt_depth{0}'.format(d))
+        os.remove("./sklearn_tree_ttt_depth{0}".format(d))
         # Predict using test set
-        sklearn_y_pred = [predict_example(x, sklearn_clf) for x in X_ttt_tst]
+        sklearn_y_pred = sklearn_clf.predict(X_ttt_tst, check_input=True)
         # Compute the confusion matrix
-        print(confusion_matrix(y_ttt_tst, sklearn_y_pred))
-  
+        tn, fp, fn, tp = confusion_matrix(y_ttt_tst, sklearn_y_pred).ravel()
+        print("(tn, fp, fn, tp) = ", (tn, fp, fn, tp))
+        plot_confusion_matrix(y_ttt_tst, sklearn_y_pred, normalize=False,
+                      title='sklearn_tree_ttt_depth{0}_cm'.format(d))
