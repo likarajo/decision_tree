@@ -483,26 +483,26 @@ if __name__ == '__main__':
     X_ttt_trn, X_ttt_tst, y_ttt_trn, y_ttt_tst = train_test_split(X_ttt, y_ttt, test_size=0.3, random_state=42)
  
 
-##=========Test in monks-1=================================
-#    # Learn a decision tree of depth 3
-#    decision_tree = id3(Xtrn1, ytrn1, max_depth=3)
-#
-#    # Pretty print it to console
-#    pprint(decision_tree)
-#    #pretty_print(decision_tree)
-#
-##    # Visualize the tree and save it as a PNG image
-##    dot_str = to_graphviz(decision_tree)
-##    render_dot_file(dot_str, './my_learned_tree')
-#
-#    # Compute the train and test error
-#    y_pred = [predict_example(x, decision_tree) for x in Xtrn1]
-#    trn_err = compute_error(ytrn1, y_pred)
-#    y_pred = [predict_example(x, decision_tree) for x in Xtst1]
-#    tst_err = compute_error(ytst1, y_pred)
-#
-#    print('Train Error = {0:4.2f}%.'.format(trn_err * 100))
-#    print('Test Error = {0:4.2f}%.'.format(tst_err * 100))
+#=========Test in monks-1=================================
+    # Learn a decision tree of depth 3
+    decision_tree = id3(Xtrn1, ytrn1, max_depth=3)
+
+    # Pretty print it to console
+    pprint(decision_tree)
+    #pretty_print(decision_tree)
+
+    # Visualize the tree and save it as a PNG image
+    dot_str = to_graphviz(decision_tree)
+    render_dot_file(dot_str, './my_learned_tree')
+
+    # Compute the train and test error
+    y_pred = [predict_example(x, decision_tree) for x in Xtrn1]
+    trn_err = compute_error(ytrn1, y_pred)
+    y_pred = [predict_example(x, decision_tree) for x in Xtst1]
+    tst_err = compute_error(ytst1, y_pred)
+
+    print('Train Error = {0:4.2f}%.'.format(trn_err * 100))
+    print('Test Error = {0:4.2f}%.'.format(tst_err * 100))
 
 #=========For depth = 1 to 10, learn decision trees 
 #         and compute the average training and test errors on each of 
